@@ -1,6 +1,4 @@
 # Updated-Onboarding
-# Updated-Onboarding
-
 ## Food Hub
  A Django Application to perform CRUD Operations on Entities such as Merchant, Item, Store, Order.
 
