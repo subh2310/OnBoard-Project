@@ -1,30 +1,59 @@
-from accounts.serializers import OrderSerializer
-from accounts.models import Merchant, Store, Order
-from celery import shared_task
-from django.db.utils import OperationalError
-import structlog
-import requests
+from urllib import response
+from .models import *
+from celery import Celery
+from .serializers import *
+from rest_framework import status
+from django.contrib.auth.models import User
+from rest_framework.response import Response
 
-log = structlog.get_logger()
+app = Celery('tasks', broker='pyamqp://guest@localhost//')
+
+@app.task()
+def create_store(user, data):
+    user = User.objects.get(pk = user)
+    profile = Profile.objects.get(user = user)
+    serializer = StoresSerializer(data = data)
+    valid = serializer.is_valid(raise_exception = True)
+    if valid:
+        serializer.save(merchant = profile)
+        return valid
+    else:
+        response = {
+            'success' : True,
+            'status_code' : status.HTTP_400_BAD_REQUEST,
+            'message' : "Error in Store Creation"
+        }
+        return Response(response, status = status.HTTP_400_BAD_REQUEST)
 
 
-@shared_task(name="create_order", autoretry_for=(OperationalError,), retry_kwargs={
-    'max_retries': 5,
-    'countdown': 2})
-def create_order(data):
-    """
-    This function is used to create Order asynchronously.
-    """
-    log.msg('Creating Order ', initial_data=data)
-    merchant_instance = Merchant.objects.filter(pk=data['merchant']).first()
-    store_instance = Store.objects.filter(pk=data['store']).first()
-    items = data['items']
-    order_instance = Order.objects.create(
-        merchant=merchant_instance, store=store_instance,
-        total_cost=data['total_cost'])
-    order_instance.items.set(items)
-    log.msg('Order Created', orderID=order_instance.id)
-    serialized_order = OrderSerializer(order_instance)
-    log.msg('Serialized Order Data', data=serialized_order.data)
-    return serialized_order.data
+# def create_order(user, data):
+#     user = User.objects.get(pk = user)
+#     serializer = ItemSerializers(data = data)
+#     valid = serializer.is_valid(raise_exception = True)
+#     if valid:
+#         serializer.save(user = user)
+#         return valid
+#     else:
+#         response = {
+#             'success' : True,
+#             'status_code' : status.HTTP_400_BAD_REQUEST,
+#             'message' : "Error in Order Creation"
+#         }
+#         return Response(response, status = status.HTTP_400_BAD_REQUEST)
+@app.task()
+def create_order(user, data):
+    user = User.objects.get(pk=user)
+    serializer = OrderSerializer(data=data)
+    valid = serializer.is_valid(raise_exception=True)
+    if valid:
+        serializer.save(user=user)
+        return valid
+    else:
+        response = {
+            'success': True,
+            'status_code': status.HTTP_400_BAD_REQUEST,
+            'message': "Error in Order Creation"
+        }
+        return Response(response, status=status.HTTP_400_BAD_REQUEST)
+
 
