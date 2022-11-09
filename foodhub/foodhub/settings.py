@@ -9,11 +9,14 @@ https://docs.djangoproject.com/en/4.1/topics/settings/
 For the full list of settings and their values, see
 https://docs.djangoproject.com/en/4.1/ref/settings/
 """
-import datetime
+
+import structlog
+import os
+import logging.config
 from pathlib import Path
-from datetime import timedelta
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+
 
 
 # Quick-start development settings - unsuitable for production
@@ -44,7 +47,6 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
-    'silk.middleware.SilkyMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -52,8 +54,10 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'django_structlog.middlewares.RequestMiddleware',
+    'django_structlog.middlewares.CeleryMiddleware',
+    'silk.middleware.SilkyMiddleware',
 ]
-
 ROOT_URLCONF = 'foodhub.urls'
 
 TEMPLATES = [
@@ -78,43 +82,13 @@ WSGI_APPLICATION = 'foodhub.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/4.1/ref/settings/#databases
 
-# DATABASES = {
-#     'default': {
-#         'ENGINE': 'django.db.backends.sqlite3',
-#         'NAME': BASE_DIR / 'db.sqlite3',
-#     }
-# }
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.mysql',
-        'NAME': 'foodapp',
-        'USER': 'root',
-        'PASSWORD': 'subh@2310',
-        'HOST': '127.0.0.1',
-        'PORT': '3306',
-        }
+        'ENGINE': 'django.db.backends.sqlite3',
+        'NAME': BASE_DIR / 'db.sqlite3',
     }
-REST_FRAMEWORK = {
-    'DEFAULT_AUTHENTICATION_CLASSES': [
-        'rest_framework_simplejwt.authentication.JWTAuthentication',
-    ],
-    'DEFAULT_FILTER_BACKENDS': ['django_filters.rest_framework.DjangoFilterBackend'],
-    # 'DEFAULT_PARSER_CLASSES': [
-    #         'rest_framework.parsers.JSONParser',
-    #     ],
-    'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.LimitOffsetPagination',
-    'PAGE_SIZE': 10
 }
 
-AUTH_USER_MODEL = "accounts.User"
-AUTHENTICATION_BACKENDS = (
-    ('django.contrib.auth.backends.ModelBackend'),
-)
-
-SIMPLE_JWT = {
-    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=300),
-    'REFRESH_TOKEN_LIFETIME': timedelta(days=1),
-}
 
 # Password validation
 # https://docs.djangoproject.com/en/4.1/ref/settings/#auth-password-validators
@@ -135,17 +109,98 @@ AUTH_PASSWORD_VALIDATORS = [
 ]
 
 
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'verbose': {
+            'format': '{levelname} {asctime} {module} {process:d} {thread:d} {message}',
+            'style': '{',
+        },
+        'simple': {
+            'format': '{levelname} {message}',
+            'style': '{',
+        },
+        "json_formatter": {
+            "()": structlog.stdlib.ProcessorFormatter,
+            "processor": structlog.processors.JSONRenderer(),
+        },
+        "plain_console": {
+            "()": structlog.stdlib.ProcessorFormatter,
+            "processor": structlog.dev.ConsoleRenderer(),
+        },
+        "key_value": {
+            "()": structlog.stdlib.ProcessorFormatter,
+            "processor": structlog.processors.KeyValueRenderer(key_order=['timestamp', 'level', 'event', '_logger']),
+        },
+    },
+    'handlers': {
+        'file': {
+            'class': 'logging.FileHandler',
+            'filename': str(BASE_DIR) + '/debug.log',
+            'formatter': 'verbose',
+        },
+        'console': {
+            'class': 'logging.StreamHandler',
+            'formatter': 'simple',
+        },
+        "json_file": {
+            "class": "logging.handlers.WatchedFileHandler",
+            "filename": str(BASE_DIR) + '/json.log',
+            "formatter": "json_formatter",
+        },
+        "flat_line_file": {
+            "class": "logging.handlers.WatchedFileHandler",
+            "filename": str(BASE_DIR) + '/flat_line.log',
+            "formatter": "key_value",
+        },
+    },
+    'root': {
+        'handlers': ['console', 'file'],
+        'level': 'INFO',
+    },
+    'loggers': {
+        'django': {
+            'handlers': ['console', 'file'],
+            'level': os.getenv('DJANGO_LOG_LEVEL', 'INFO'),
+            'propagate': True,
+        },
+        "django_structlog": {
+            "handlers": ["flat_line_file", "json_file"],
+            "level": "INFO",
+        },
+    },
+}
+
+structlog.configure(
+    processors=[
+        structlog.contextvars.merge_contextvars,
+        structlog.stdlib.filter_by_level,
+        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.stdlib.add_logger_name,
+        structlog.stdlib.add_log_level,
+        structlog.stdlib.PositionalArgumentsFormatter(),
+        structlog.processors.StackInfoRenderer(),
+        structlog.processors.format_exc_info,
+        structlog.processors.UnicodeDecoder(),
+        structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
+    ],
+    logger_factory=structlog.stdlib.LoggerFactory(),
+    cache_logger_on_first_use=True,
+)
+
 # Internationalization
 # https://docs.djangoproject.com/en/4.1/topics/i18n/
 
 LANGUAGE_CODE = 'en-us'
 
-TIME_ZONE = 'UTC'
+TIME_ZONE = 'Asia/Kolkata'
 
 USE_I18N = True
 
-USE_TZ = True
+USE_L10N = True
 
+USE_TZ = False
 
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/4.1/howto/static-files/
@@ -157,10 +212,10 @@ STATIC_URL = 'static/'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-CELERY_BROKER_URL = 'amqp://localhost'
-CELERY_RESULT_BACKEND = 'amqp://localhost'
-CELERY_ACCEPT_CONTENT = ['application/json']
-CELERY_TASK_SERIALIZER = 'json'
-CELERY_RESULT_SERIALIZER = 'json'
-# Change below to True during Testing for Celery Task to run on same process.
-CELERY_TASK_ALWAYS_EAGER = False
+# CELERY_BROKER_URL = 'amqp://localhost'
+# CELERY_RESULT_BACKEND = 'amqp://localhost'
+# CELERY_ACCEPT_CONTENT = ['application/json']
+# CELERY_TASK_SERIALIZER = 'json'
+# CELERY_RESULT_SERIALIZER = 'json'
+# # Change below to True during Testing for Celery Task to run on same process.
+# CELERY_TASK_ALWAYS_EAGER = False
