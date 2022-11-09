@@ -1,113 +1,117 @@
+from cgitb import lookup
+from dataclasses import field
+from enum import unique
+from tkinter.tix import Tree
+from .models import *
 from rest_framework import serializers
-from .models import User
-from django.contrib.auth import authenticate
-from rest_framework.validators import UniqueValidator
-from django.contrib.auth.password_validation import validate_password
-from rest_framework import serializers
-from accounts.validators import (validate_store_merchant,
-                                 validate_items_merchant, validate_total_cost)
-from accounts.models import (Merchant, Item, Store, Order)
+from django.contrib.auth import authenticate, login
+from rest_framework_simplejwt.tokens import RefreshToken
+
+class ProfileSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Profile
+        fields = ("name", "role",)
 
 
-class RegisterSerializer(serializers.ModelSerializer):
-    email = serializers.EmailField(required=True, validators=[
-                                   UniqueValidator(queryset=User.objects.all(), message='User with this email already exists.')])
-
-    password1 = serializers.CharField(
-        write_only=True, required=True, validators=[validate_password])
-    password2 = serializers.CharField(write_only=True, required=True)
+class UserRegistrationSerializer(serializers.ModelSerializer):
+    profile = ProfileSerializer()
 
     class Meta:
         model = User
-        fields = ('password1', 'password2', 'email', 'first_name', 'last_name')
-        extra_kwargs = {
-            'first_name': {'required': True},
-            'last_name': {'required': True}
-        }
-
-    def validate(self, attrs):
-        if attrs['password1'] != attrs['password2']:
-            raise serializers.ValidationError(
-                {"password": "Password didn't match."})
-
-        return attrs
-
-    def create(self, validated_data):
-        user = User.objects.create(
-            email=validated_data['email'],
-            first_name=validated_data['first_name'],
-            last_name=validated_data['last_name'],
+        fields = (
+            "username",
+            "email",
+            "password",
+            "profile",
         )
 
-        user.set_password(validated_data['password1'])
-        user.save()
+    def validate_email(self, value):
+        lower_email = value.lower()
+        if User.objects.filter(email__iexact = lower_email).exists():
+            raise serializers.ValidationError("A user with that email already exists.")
+        return lower_email
 
+    def create(self, validated_data):
+        profile_data = validated_data.pop("profile")
+        user = User.objects.create(
+            username = validated_data["username"],
+            email = validated_data["email"],
+        )
+        user.set_password(validated_data["password"])
+        user.save()
+        Profile.objects.create(user = user, **profile_data)
         return user
 
-
-class LoginSerializer(serializers.Serializer):
-    email = serializers.EmailField()
-    password = serializers.CharField()
-
-
-class MerchantSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Merchant
-        fields = ('pk', 'name', 'email', 'phone', 'created_at')
-
-
-class ItemSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Item
-        fields = ('pk', 'name', 'merchant', 'cost',
-                  'description', 'created_at')
-
-
-class StoreSerializer(serializers.ModelSerializer):
-
-    class Meta:
-        model = Store
-        fields = ('pk', 'name', 'merchant', 'address', 'lon',
-                  'lat', 'active', 'items', 'created_at')
+class UserLoginSerializer(serializers.Serializer):
+    username = serializers.CharField(max_length = 128)
+    password = serializers.CharField(max_length=128, write_only=True)
+    access = serializers.CharField(read_only=True)
+    refresh = serializers.CharField(read_only=True)
+    role = serializers.CharField(read_only=True)
 
     def validate(self, data):
-        """
-        Perform object level validation for Merchant Integrity during Store
-        Creation.
+        username = data.pop('username')
+        password = data.pop('password')
+        user = authenticate(username = username, password = password)
+        if user is None:
+            raise serializers.ValidationError("Invalid login credentials")
 
-        validate_items_merchant : Checks if the Items' Merchant is same as
-        Order's Merchant.
-        """
+        try:
+            refresh = RefreshToken.for_user(user)
+            refresh_token = str(refresh)
+            access_token = str(refresh.access_token)
+            validation = {
+                'access': access_token,
+                'refresh': refresh_token,
+                'username': user.username
+            }
+            return validation
+        except User.DoesNotExist:
+            raise serializers.ValidationError("Invalid login credentials")
 
-        validate_items_merchant(data)
+class UserChangePasswordSerializer(serializers.Serializer):
+    model = User
+    old_password = serializers.CharField(required = True)
+    new_password = serializers.CharField(required = True)            
 
-        return data
+class ItemSerializers(serializers.ModelSerializer):
+    stores = serializers.SlugRelatedField(slug_field = 'name', queryset = Stores.objects.all())
+    class Meta:
+        model = Items
+        fields = ['id', 'name', 'price', 'description', 'stores']
 
+class StoresSerializer(serializers.ModelSerializer):
+    merchant = serializers.StringRelatedField(read_only = True)
+    items = ItemSerializers(many = True, read_only = True)
+    class Meta:
+        model = Stores
+        fields = ["merchant", "name", "address", "lat", "lng", "items"]
+        extra_kwargs = {"merchant": {"read_only": True}}
 
 class OrderSerializer(serializers.ModelSerializer):
+    user = serializers.StringRelatedField(read_only = True)
+    # items = serializers.SlugRelatedField(slug_field = "name", many = True, queryset = Items.objects.all())
+
+    def get_fields(self, *args, **kwargs):
+        fields = super(OrderSerializer, self).get_fields(*args, **kwargs)
+        fields['merchant'].queryset = fields['merchant'].queryset.filter(role = 1)
+        return fields
+
+    def to_representation(self, instance):
+        response = super().to_representation(instance)
+        print("-----------------------------------------")
+        print(response)
+        print("-----------------------------------------")
+        # response['store'] = StoresSerializer(instance.store).data['name']
+        # response['merchant'] = ProfileSerializer(instance.merchant).data['name']
+        return response
 
     class Meta:
-        model = Order
-        fields = ('pk', 'merchant', 'store', 'total_cost',
-                  'status', 'items', 'created_at')
+        model = Orders
+        fields = ['id', 'user', 'merchant', 'store', 'items']
 
-    def validate(self, data):
-        """
-        Perform object level validation for Merchant Integrity during Order
-        Creation.
-
-        Contains below functions :-
-        1. validate_store_merchant : Checks if the Store's Merchant is same as
-        Order's Merchant.
-        2. validate_items_merchant : Checks if the Items' Merchant is same as
-        Order's Merchant.
-        3. validate_total_cost : Checks if the Sum of Item Costs is equal to
-        Total Cost
-        """
-
-        validate_store_merchant(data)
-        validate_items_merchant(data)
-        validate_total_cost(data)
-
-        return data
-
+class ViewConsumerSerializer(serializers.ModelSerializer):
+    profile = ProfileSerializer()
+    class Meta:
+        model = User
+        fields = ('username', 'email', 'profile')
