@@ -1,19 +1,20 @@
-from accounts.views import RegisterView, LoginView
-from accounts import views
-from rest_framework.routers import DefaultRouter
-from django.urls import path, include
-from rest_framework_simplejwt.views import (
-    TokenRefreshView,
-)
-router = DefaultRouter()
-router.register(r'merchants', views.MerchantViewSet)
-router.register(r'items', views.ItemViewSet)
-router.register(r'stores', views.StoreViewSet)
-router.register(r'orders', views.OrderViewSet)
+from django.urls import path
+from rest_framework import routers
+from .views import *
+
+# router = routers.DefaultRouter()
+# router.register('items', ItemsView, 'items')
+
 urlpatterns = [
-    path('', include(router.urls)),
-    path('register/', RegisterView.as_view()),
-    path('login/', LoginView.as_view()),
-    path('token/refresh/', TokenRefreshView.as_view()),
-    
+    path("", ApiHomepage),
+    path("register/", UserRegisterView.as_view(), name = 'register'),
+    path("login/", AuthUserLoginView.as_view(), name = 'login'),
+    path("stores/", StoresView.as_view(), name = "stores"),
+    path("place_orders/", PlaceOrderView.as_view(), name = "placeorders"),
+    path("see_orders/", SeeOrderView.as_view(), name = "seeorders"),
+    path("change-password/",UserChangePasswordView.as_view(), name = "change-password"),
+    path("view-consumer/", ViewConsumerView.as_view(), name = "view-consumer"),
+    path("items/", ItemsView.as_view(), name = "items")
 ]
+
+# urlpatterns += router.urls
